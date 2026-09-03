@@ -79,21 +79,23 @@
     This is a self-contained x86 PC emulator (<a href="https://github.com/copy/v86" style="color:#9ad1ff">v86</a>,
     the actively-maintained open-source successor to Fabrice Bellard's original JSLinux) running a real
     Linux kernel entirely inside this browser tab — nothing is installed on the Chromebook itself.
-    Everything needed to run it (the emulator engine and the Linux kernel image, ~15&nbsp;MB total) is
-    fetched from public CDNs the first time you click <b>Start Linux</b>, so you need internet access once
-    per session to boot it; after that it runs locally in the tab.
+    Everything needed to run it (the emulator engine plus the
+    <a href="https://archlinux.org/" style="color:#9ad1ff">Arch Linux</a> kernel and root filesystem) is
+    fetched on demand from public CDNs the first time you click <b>Start Linux</b>, so you need internet
+    access once per session to boot it; after that it runs locally in the tab. Log in as
+    <code>root</code> with no password.
     <br><br>
     <b>Networking:</b> the virtual machine's network card is bridged to the real internet through a public
-    relay (<code>wss://relay.widgetry.org/</code>). It does <i>not</i> connect automatically — once you see
-    the <code>~%</code> prompt, run <code>udhcpc</code> to get an IP address, then you can use
-    <code>ping</code>, <code>wget</code>, <code>curl</code>, and <code>telnet</code> from inside the guest
-    (e.g. <code>ping -c3 8.8.8.8</code> or <code>wget http://example.com</code>). The "Network" indicator
-    above turns green once real traffic is seen.
+    relay (<code>wss://relay.widgetry.org/</code>). It does <i>not</i> connect automatically — once you're
+    at a shell, run <code>dhcpcd</code> (or <code>udhcpc</code>) to get an IP address, then use
+    <code>ping</code>, <code>curl</code>, <code>wget</code>, or <code>pacman</code> to reach the internet
+    (e.g. <code>ping -c3 8.8.8.8</code>). The "Network" indicator above turns green once real traffic is
+    seen.
     <br><br>
     Click inside the black screen to send keyboard input to the VM; click outside it to release your
-    keyboard back to the browser. This boots
-    <a href="https://buildroot.org/" style="color:#9ad1ff">Buildroot</a> Linux (busybox userland) — it's
-    a minimal environment, not a full desktop, but it's a real Linux shell with internet access.
+    keyboard back to the browser. Note the emulator is a real but slow 32-bit CPU (v86 can't do 64-bit) —
+    expect Arch's package manager and services to run noticeably slower than on real hardware, especially
+    on first boot while filesystem data streams in over the network.
   </div>
 </div>
 
@@ -116,8 +118,8 @@ function boot() {
 
   emulator = new V86({
     wasm_path: "https://cdn.jsdelivr.net/npm/v86@0.5.458/build/v86.wasm",
-    memory_size: 128 * 1024 * 1024,
-    vga_memory_size: 2 * 1024 * 1024,
+    memory_size: 512 * 1024 * 1024,
+    vga_memory_size: 8 * 1024 * 1024,
     screen_container: document.getElementById("screen_container"),
     bios: {
       url: "https://cdn.jsdelivr.net/gh/copy/v86@0.5/bios/seabios.bin",
@@ -125,12 +127,19 @@ function boot() {
     vga_bios: {
       url: "https://cdn.jsdelivr.net/gh/copy/v86@0.5/bios/vgabios.bin",
     },
-    bzimage: {
-      url: "https://i.copy.sh/buildroot-bzimage68.bin",
+    filesystem: {
+      baseurl: "https://i.copy.sh/arch/",
+      basefs: "https://i.copy.sh/fs.json",
     },
-    cmdline: "tsc=reliable mitigations=off random.trust_cpu=on",
+    bzimage_initrd_from_filesystem: true,
+    cmdline: [
+      "rw apm=off vga=0x344 video=vesafb:ypan,vremap:8",
+      "root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose",
+      "mitigations=off audit=0 init_on_free=on tsc=reliable random.trust_cpu=on nowatchdog",
+      "init=/usr/bin/init-openrc net.ifnames=0 biosdevname=0",
+    ].join(" "),
     net_device: {
-      type: "ne2k",
+      type: "virtio",
       relay_url: "wss://relay.widgetry.org/",
     },
     autostart: true,
