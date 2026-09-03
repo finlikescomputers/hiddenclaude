@@ -82,8 +82,8 @@
     Everything needed to run it (the emulator engine plus the
     <a href="https://archlinux.org/" style="color:#9ad1ff">Arch Linux</a> kernel and root filesystem) is
     fetched on demand from public CDNs the first time you click <b>Start Linux</b>, so you need internet
-    access once per session to boot it; after that it runs locally in the tab. Log in as
-    <code>root</code> with no password.
+    access once per session to boot it; after that it runs locally in the tab. It boots straight to a
+    <code>root@localhost</code> shell — no login prompt or password.
     <br><br>
     <b>Networking:</b> the virtual machine's network card is bridged to the real internet through a public
     relay (<code>wss://relay.widgetry.org/</code>). It does <i>not</i> connect automatically — once you're
@@ -159,7 +159,7 @@ function boot() {
     statusEl.textContent = "Running — click the screen to use the keyboard.";
   });
 
-  // Networking is not automatic in this image (the guest must run udhcpc
+  // Networking is not automatic (the guest must bring up a DHCP client
   // itself); rather than guess, treat real inbound packets on the virtual
   // NIC as proof the relay link is up.
   emulator.add_listener("net0-receive", function() { setNet(true); });
