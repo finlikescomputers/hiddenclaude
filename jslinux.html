@@ -78,22 +78,24 @@
   <div id="help">
     This is a self-contained x86 PC emulator (<a href="https://github.com/copy/v86" style="color:#9ad1ff">v86</a>,
     the actively-maintained open-source successor to Fabrice Bellard's original JSLinux) running a real
-    Linux kernel entirely inside this browser tab — nothing is installed on the Chromebook itself.
-    Everything needed to run it (the emulator engine and the Linux kernel image, ~15&nbsp;MB total) is
-    fetched from public CDNs the first time you click <b>Start Linux</b>, so you need internet access once
-    per session to boot it; after that it runs locally in the tab.
+    <a href="https://www.debian.org/" style="color:#9ad1ff">Debian</a> Linux kernel entirely inside this
+    browser tab — nothing is installed on the Chromebook itself. Everything needed to run it (the emulator
+    engine plus the kernel and disk image) is fetched on demand the first time you click <b>Start Linux</b>,
+    so you need internet access once per session to boot it; after that it runs locally in the tab.
+    <br><br>
+    <b>Boot is slow</b> — this is a full systemd-based Debian, and v86 emulates a 32-bit CPU in software
+    with no hardware acceleration, so expect roughly 5-6 minutes from clicking Start to a login prompt.
+    Log in as <code>root</code> with password <code>root</code> (or <code>debian</code> / <code>debian</code>).
     <br><br>
     <b>Networking:</b> the virtual machine's network card is bridged to the real internet through a public
-    relay (<code>wss://relay.widgetry.org/</code>). It does <i>not</i> connect automatically — once you see
-    the <code>~%</code> prompt, run <code>udhcpc</code> to get an IP address, then you can use
-    <code>ping</code>, <code>wget</code>, <code>curl</code>, and <code>telnet</code> from inside the guest
-    (e.g. <code>ping -c3 8.8.8.8</code> or <code>wget http://example.com</code>). The "Network" indicator
-    above turns green once real traffic is seen.
+    relay (<code>wss://relay.widgetry.org/</code>), and this image has a static IP baked in, so it connects
+    automatically at boot — no commands needed. Once you're at a shell, <code>ping</code>, <code>curl</code>,
+    <code>wget</code>, and <code>apt</code> can all reach the internet (e.g. <code>ping -c3 8.8.8.8</code>).
+    The "Network" indicator above turns green once real traffic is seen.
     <br><br>
     Click inside the black screen to send keyboard input to the VM; click outside it to release your
-    keyboard back to the browser. This boots
-    <a href="https://buildroot.org/" style="color:#9ad1ff">Buildroot</a> Linux (busybox userland) — it's
-    a minimal environment, not a full desktop, but it's a real Linux shell with internet access.
+    keyboard back to the browser. The screen switches from a text console to a pixel-rendered one partway
+    through boot — that's normal, not a freeze.
   </div>
 </div>
 
@@ -114,10 +116,12 @@ function boot() {
   document.getElementById("start_btn").disabled = true;
   statusEl.textContent = "Downloading Linux kernel and emulator…";
 
+  var assets = "https://cdn.jsdelivr.net/gh/finlikescomputers/hiddenclaude@5a2b695/debian/";
+
   emulator = new V86({
     wasm_path: "https://cdn.jsdelivr.net/npm/v86@0.5.458/build/v86.wasm",
-    memory_size: 128 * 1024 * 1024,
-    vga_memory_size: 2 * 1024 * 1024,
+    memory_size: 1024 * 1024 * 1024,
+    vga_memory_size: 8 * 1024 * 1024,
     screen_container: document.getElementById("screen_container"),
     bios: {
       url: "https://cdn.jsdelivr.net/gh/copy/v86@0.5/bios/seabios.bin",
@@ -125,13 +129,29 @@ function boot() {
     vga_bios: {
       url: "https://cdn.jsdelivr.net/gh/copy/v86@0.5/bios/vgabios.bin",
     },
-    bzimage: {
-      url: "https://i.copy.sh/buildroot-bzimage68.bin",
+    bzimage: { url: assets + "vmlinuz" },
+    initrd: { url: assets + "initrd.img" },
+    hda: {
+      // Debian's own "Quick Image Baker" i386 image, split into 64MB
+      // zstd-compressed parts (see tools/split-image.py in copy/v86) so no
+      // single committed file exceeds GitHub's size limits.
+      url: assets + "hda.img.zst",
+      async: true,
+      size: 10737418240,
+      use_parts: true,
+      fixed_chunk_size: 64 * 1024 * 1024,
     },
-    cmdline: "tsc=reliable mitigations=off random.trust_cpu=on",
+    // noapic/nolapic/acpi=off: v86 doesn't provide a real IO-APIC or ACPI
+    // tables, and this kernel otherwise null-derefs in setup_IO_APIC.
+    cmdline: "root=LABEL=rootfs console=tty0 console=ttyS0 noapic nolapic acpi=off",
     net_device: {
       type: "ne2k",
       relay_url: "wss://relay.widgetry.org/",
+      // This image has no DHCP client; it's hardcoded (via
+      // /etc/network/interfaces) to the classic QEMU usermode-networking
+      // address scheme, so match it here for the network to just work.
+      router_ip: "10.0.2.2",
+      vm_ip: "10.0.2.15",
     },
     autostart: true,
   });
@@ -150,9 +170,9 @@ function boot() {
     statusEl.textContent = "Running — click the screen to use the keyboard.";
   });
 
-  // Networking is not automatic in this image (the guest must run udhcpc
-  // itself); rather than guess, treat real inbound packets on the virtual
-  // NIC as proof the relay link is up.
+  // The guest's static-IP networking comes up on its own at boot; rather
+  // than guess when, treat real inbound packets on the virtual NIC as
+  // proof the relay link is up.
   emulator.add_listener("net0-receive", function() { setNet(true); });
 }
 
