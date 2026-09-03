@@ -1,0 +1,163 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>JSLinux — Linux in your browser</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #1e1e1e;
+    color: #ddd;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  #bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: #2a2a2a;
+    border-bottom: 1px solid #444;
+    flex-wrap: wrap;
+  }
+  #bar button {
+    background: #3a3a3a;
+    color: #ddd;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font: inherit;
+  }
+  #bar button:hover { background: #4a4a4a; }
+  #status { font-size: 13px; color: #9ad1ff; }
+  #net_status { font-size: 13px; }
+  #net_status.up { color: #7ee787; }
+  #net_status.down { color: #f2a65a; }
+  #wrap { padding: 16px; }
+  #screen_container {
+    display: inline-block;
+    background: #000;
+    padding: 4px;
+    border: 1px solid #444;
+  }
+  #screen_container > div {
+    white-space: pre;
+    font: 14px ui-monospace, monospace;
+    line-height: 14px;
+    color: #ccc;
+  }
+  #help {
+    max-width: 760px;
+    margin-top: 16px;
+    font-size: 13px;
+    color: #999;
+    line-height: 1.5;
+  }
+  #help code {
+    background: #2a2a2a;
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: #ddd;
+  }
+</style>
+
+<div id="bar">
+  <button id="start_btn">Start Linux</button>
+  <button id="restart_btn">Restart</button>
+  <span id="status">Idle</span>
+  <span id="net_status" class="down">Network: not connected</span>
+</div>
+
+<div id="wrap">
+  <!-- Required structure for v86's ScreenAdapter -->
+  <div id="screen_container">
+    <div></div>
+    <canvas style="display: none"></canvas>
+  </div>
+
+  <div id="help">
+    This is a self-contained x86 PC emulator (<a href="https://github.com/copy/v86" style="color:#9ad1ff">v86</a>,
+    the actively-maintained open-source successor to Fabrice Bellard's original JSLinux) running a real
+    Linux kernel entirely inside this browser tab — nothing is installed on the Chromebook itself.
+    Everything needed to run it (the emulator engine and the Linux kernel image, ~15&nbsp;MB total) is
+    fetched from public CDNs the first time you click <b>Start Linux</b>, so you need internet access once
+    per session to boot it; after that it runs locally in the tab.
+    <br><br>
+    <b>Networking:</b> the virtual machine's network card is bridged to the real internet through a public
+    relay (<code>wss://relay.widgetry.org/</code>). It does <i>not</i> connect automatically — once you see
+    the <code>~%</code> prompt, run <code>udhcpc</code> to get an IP address, then you can use
+    <code>ping</code>, <code>wget</code>, <code>curl</code>, and <code>telnet</code> from inside the guest
+    (e.g. <code>ping -c3 8.8.8.8</code> or <code>wget http://example.com</code>). The "Network" indicator
+    above turns green once real traffic is seen.
+    <br><br>
+    Click inside the black screen to send keyboard input to the VM; click outside it to release your
+    keyboard back to the browser. This boots
+    <a href="https://buildroot.org/" style="color:#9ad1ff">Buildroot</a> Linux (busybox userland) — it's
+    a minimal environment, not a full desktop, but it's a real Linux shell with internet access.
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/v86@0.5.458/build/libv86.js"></script>
+<script>
+"use strict";
+
+var statusEl = document.getElementById("status");
+var netEl = document.getElementById("net_status");
+var emulator = null;
+
+function setNet(up) {
+  netEl.textContent = "Network: " + (up ? "connected" : "not connected");
+  netEl.className = up ? "up" : "down";
+}
+
+function boot() {
+  document.getElementById("start_btn").disabled = true;
+  statusEl.textContent = "Downloading Linux kernel and emulator…";
+
+  emulator = new V86({
+    wasm_path: "https://cdn.jsdelivr.net/npm/v86@0.5.458/build/v86.wasm",
+    memory_size: 128 * 1024 * 1024,
+    vga_memory_size: 2 * 1024 * 1024,
+    screen_container: document.getElementById("screen_container"),
+    bios: {
+      url: "https://cdn.jsdelivr.net/gh/copy/v86@0.5/bios/seabios.bin",
+    },
+    vga_bios: {
+      url: "https://cdn.jsdelivr.net/gh/copy/v86@0.5/bios/vgabios.bin",
+    },
+    bzimage: {
+      url: "https://i.copy.sh/buildroot-bzimage68.bin",
+    },
+    cmdline: "tsc=reliable mitigations=off random.trust_cpu=on",
+    net_device: {
+      type: "ne2k",
+      relay_url: "wss://relay.widgetry.org/",
+    },
+    autostart: true,
+  });
+
+  emulator.add_listener("download-progress", function(e) {
+    if (e.file_index !== undefined && e.file_total !== undefined) {
+      statusEl.textContent = "Downloading… " + Math.round(100 * e.loaded / (e.total || e.loaded || 1)) + "%";
+    }
+  });
+
+  emulator.add_listener("emulator-ready", function() {
+    statusEl.textContent = "Booting…";
+  });
+
+  emulator.add_listener("emulator-started", function() {
+    statusEl.textContent = "Running — click the screen to use the keyboard.";
+  });
+
+  // Networking is not automatic in this image (the guest must run udhcpc
+  // itself); rather than guess, treat real inbound packets on the virtual
+  // NIC as proof the relay link is up.
+  emulator.add_listener("net0-receive", function() { setNet(true); });
+}
+
+document.getElementById("start_btn").addEventListener("click", boot);
+document.getElementById("restart_btn").addEventListener("click", function() {
+  location.reload();
+});
+</script>
